@@ -32,7 +32,16 @@ assets/*.json
 assets/*_mask.png
 assets/final_output.jpg
 assets/*_restored.jpg
+outputs/
+
 
 # Request by user to clean commit list
-# If you want to track sample inputs, keep them.
-# Ignoring typical generated output patterns.
+# debug artifacts
+debug_*.txt
+assets/debug_*.jpg
+
+# User uploaded test images (hash filenames)
+assets/*.jpg
+assets/*.png
+!assets/sample_poster.jpg
+!assets/image.png

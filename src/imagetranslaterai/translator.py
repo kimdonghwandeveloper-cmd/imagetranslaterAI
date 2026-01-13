@@ -4,76 +4,81 @@ import base64
 import logging
 from typing import List, Dict, Any
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import OpenAI, OpenAIError, RateLimitError, AuthenticationError
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
 class Translator:
     def __init__(self):
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError("OPENAI_API_KEY is not set in environment variables.")
-        self.client = OpenAI(api_key=api_key)
+        self.api_key = os.getenv("OPENAI_API_KEY")
+        self.client = None
+
+        if not self.api_key:
+            logger.warning("⚠️ OPENAI_API_KEY not set. Translation will be skipped (fallback to original).")
+        else:
+            try:
+                self.client = OpenAI(api_key=self.api_key)
+            except Exception as e:
+                logger.error(f"OpenAI Client Init Failed: {e}")
 
     def _encode_image(self, image_path: str) -> str:
         with open(image_path, "rb") as image_file:
             return base64.b64encode(image_file.read()).decode('utf-8')
 
-    def translate_and_analyze(self, text_blocks: List[Dict[str, Any]], image_path: str) -> List[Dict[str, Any]]:
+    def translate_and_analyze(self, text_blocks: List[Dict[str, Any]], image_path: str, target_language: str = "Korean") -> List[Dict[str, Any]]:
         """
         Translates text blocks and analyzes style using GPT-4o.
-        
-        Args:
-            text_blocks: List of OCR results [{'text': '...', 'box': [...]}, ...]
-            image_path: Path to the original full image for context.
-            
-        Returns:
-            List of dicts with keys: 'original_text', 'translated_text', 'color_hex', 'font_style'
+        Supports dynamic target language (e.g., "English", "Japanese").
         """
-        logger.info("Sending request to GPT-4o for translation and analysis...")
-        
-        base64_image = self._encode_image(image_path)
-        
-        # Simplify text blocks for the prompt
-        blocks_summary = json.dumps([{
-            'id': i, 
-            'text': b['text'], 
-            'box': b['box']
-        } for i, b in enumerate(text_blocks)], ensure_ascii=False)
+        # 1. Fallback if no API client
+        if not self.client:
+            logger.info("No API Key. Returning fallback data.")
+            return self._create_fallback_data(text_blocks)
 
-        prompt = f"""
-        You are a professional Korean marketing copywriter and visual translator.
-        Your goal is to "Localize" text for Korean audience while strictly PRESERVING Brand Identity.
+        logger.info(f"Sending request to GPT-4o for translation to {target_language}...")
         
-        Instructions:
-        1. **Brand Protection (CRITICAL):** 
-           - DO NOT TRANSLATE Brand Names (e.g., 'OEM', 'ODM', 'Canon', 'Nike'). Keep them in English/Original.
-           - DO NOT TRANSLATE Specific Product Model Codes (e.g., 'YM-X-3011').
-           - If a text block is purely a Brand Name or Product Name, return it UNCHANGED or empty translated_text if you want to keep original text image (but we are wiping, so return English).
-        
-        2. **Summarize & Localize (Others):** 
-           - For descriptions/specs, do not translate word-for-word. Write concise, attractive Korean marketing copy.
-           - Use short phrases suitable for posters.
-        
-        3. **Style Analysis:** Suggest color and alignment.
-        
-        Input Data (ID, Text, Box):
-        {blocks_summary}
-        
-        Return ONLY valid JSON in this format:
-        [
-            {{
-                "id": 0,
-                "original_text": "Original...",
-                "translated_text": "Localized or Original(Brand)", 
-                "text_color_hex": "#000000",
-                "alignment": "left" 
-            }}
-        ]
-        """
-
         try:
+            base64_image = self._encode_image(image_path)
+            
+            # Simplify text blocks for the prompt
+            blocks_summary = json.dumps([{
+                'id': i, 
+                'text': b['text'], 
+                'box': b['box']
+            } for i, b in enumerate(text_blocks)], ensure_ascii=False)
+
+            prompt = f"""
+            You are a professional marketing copywriter and visual translator.
+            Your goal is to "Localize" text for a **{target_language}** audience while strictly PRESERVING Brand Identity.
+            
+            Instructions:
+            1. **Brand Protection (CRITICAL):** 
+               - DO NOT TRANSLATE Brand Names (e.g., 'OEM', 'ODM', 'Canon', 'Nike'). Keep them in English/Original.
+               - DO NOT TRANSLATE Specific Product Model Codes (e.g., 'YM-X-3011').
+            
+            2. **Noise Filtering (CRITICAL):**
+               - If a text block seems to be OCR noise (e.g., "1l1.", ";/.", single characters), return empty string "" for `translated_text`.
+               - Do not output garbage brackets or symbols.
+            
+            3. **Summarize & Localize:** 
+               - Write concise, natural **{target_language}** marketing copy.
+               - Output clean strings only. NO brackets like `['text']`.
+            
+            Input Data (ID, Text, Box):
+            {blocks_summary}
+            
+            Return ONLY valid JSON in this format:
+            [
+                {{
+                    "id": 0,
+                    "translated_text": "Localized Text in {target_language}", 
+                    "text_color_hex": "#000000",
+                    "alignment": "center" 
+                }}
+            ]
+            """
+
             response = self.client.chat.completions.create(
                 model="gpt-4o",
                 messages=[
@@ -95,11 +100,11 @@ class Translator:
                     }
                 ],
                 max_tokens=2000,
-                temperature=0.1 # Lower temperature for stricter adherence to brand rules
+                temperature=0.1
             )
             
             content = response.choices[0].message.content.strip()
-            # Clean up potential markdown markers if GPT adds them
+            # Clean up potential markdown markers
             if content.startswith("```json"):
                 content = content[7:]
             elif content.startswith("```"):
@@ -109,17 +114,44 @@ class Translator:
                 
             analysis_data = json.loads(content)
             
-            # Merge original 'box' data back into the results based on ID
-            # This handles cases where GPT might not return the box or modifies it.
+            # Robust ID Matching logic
             ocr_map = {i: block['box'] for i, block in enumerate(text_blocks)}
             
             for item in analysis_data:
-                idx = item.get('id')
-                if idx in ocr_map:
-                    item['box'] = ocr_map[idx]
-                    
+                raw_id = item.get('id')
+                if raw_id is not None:
+                    try:
+                        idx = int(raw_id)
+                        if idx in ocr_map:
+                            item['box'] = ocr_map[idx]
+                    except ValueError:
+                        logger.warning(f"Invalid ID format from GPT: {raw_id}")
+            
             return analysis_data
             
+        except RateLimitError:
+            logger.error("OpenAI Rate Limit Exceeded. Using fallback.")
+            return self._create_fallback_data(text_blocks)
+
+        except AuthenticationError:
+            logger.error("OpenAI Authentication Failed. Using fallback.")
+            return self._create_fallback_data(text_blocks)
+
         except Exception as e:
             logger.error(f"GPT-4o translation failed: {e}")
-            raise
+            return self._create_fallback_data(text_blocks)
+
+    def _create_fallback_data(self, text_blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Helper to create fallback data using original text when API fails.
+        """
+        fallback_data = []
+        for i, block in enumerate(text_blocks):
+            fallback_data.append({
+                "id": i,
+                "translated_text": block['text'],  # Use original text
+                "box": block['box'],
+                "text_color_hex": "#000000",
+                "alignment": "center"
+            })
+        return fallback_data

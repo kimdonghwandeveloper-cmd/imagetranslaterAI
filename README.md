@@ -61,7 +61,7 @@ uv run verify_pipeline.py
 ```
 
 실행하면 자동으로 샘플 이미지를 다운로드해서 번역을 진행합니다.
-결과는 `assets` 폴더 안에 **`final_output.jpg`** 라는 이름으로 저장됩니다.
+결과는 `outputs` 폴더 안에 **`output_YYYYMMDD_HHMMSS.jpg`** 형식으로 저장됩니다.
 
 ---
 
