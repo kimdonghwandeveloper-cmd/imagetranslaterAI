@@ -1,0 +1,38 @@
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+
+# Project Specific
+# Generated Logs
+debug_ocr.txt
+*.log
+
+# Generated Assets
+assets/NanumGothic.ttf
+assets/*.webp
+assets/*.json
+assets/*_mask.png
+assets/final_output.jpg
+assets/*_restored.jpg
+
+# Request by user to clean commit list
+# If you want to track sample inputs, keep them.
+# Ignoring typical generated output patterns.
