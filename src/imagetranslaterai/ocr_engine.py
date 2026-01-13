@@ -10,15 +10,18 @@ class OCREngine:
     def __init__(self, lang: str = 'korean', use_angle_cls: bool = True):
         logger.info(f"Initializing OCR Engine with language='{lang}'")
         try:
-            # --- [수정] 박스 감지 파라미터 튜닝 (Ultra-Tight) ---
-            # det_db_unclip_ratio: 0.65 (글자 윤곽에 밀착)
-            # det_db_box_thresh: 0.5 (흐릿한 글자도 감지)
+            # --- [수정] 박스 감지 파라미터 튜닝 (High-Res & High-Recall) ---
+            # det_limit_side_len: 2560 (고해상도 포스터 대응)
+            # det_db_box_thresh: 0.4 (흐릿하거나 스타일리시한 폰트 감지)
+            # det_db_unclip_ratio: 1.2 (박스 여유 확보)
             self.ocr = PaddleOCR(
                 use_angle_cls=use_angle_cls, 
                 lang=lang, 
-                det_db_unclip_ratio=0.65, 
-                det_db_box_thresh=0.5,
-                # det_db_score_mode='slow' # Not supported in this version
+                det_limit_side_len=1280, # Stabilized
+                det_db_box_thresh=0.3,   # [Refactor] Increased sensitivity for faint text
+                det_db_unclip_ratio=1.05, # [Refactor] Surgical precision (Minimal expansion)
+                # ocr_version='PP-OCRv4', # Not supported for Korean yet
+                # structure_version='PP-StructureV2'
             ) 
         except Exception as e:
             logger.error(f"Failed to initialize PaddleOCR: {e}")
@@ -75,7 +78,58 @@ class OCREngine:
                         'score': float(score)
                     })
 
-        logger.info(f"Detected {len(parsed_results)} text blocks.")
-        return parsed_results
+        # Post-Processing: Filtering & Clamping
+        # [Filter Logic]
+        # 1. Score < 0.6 (Noise)
+        # 2. Area < 50px (Tiny dots)
+        # 3. Clamping (Out of bounds)
+        
+        import cv2
+        import numpy as np
+        
+        # Load image to get dimensions
+        try:
+            img = cv2.imread(image_input)
+            if img is None:
+                h, w = 99999, 99999 # Safe fallback if image read fails
+            else:
+                h, w = img.shape[:2]
+        except:
+            h, w = 99999, 99999
+
+        valid_results = []
+        for item in parsed_results:
+            box = item['box']
+            score = item['score']
+
+            # [Filter 1] Score Check
+            if score < 0.6: 
+                logger.debug(f"Filtered low score: {score}")
+                continue 
+
+            # [Filter 2] Clamping
+            clean_box = []
+            for point in box:
+                # point is [x, y]
+                cx = max(0, min(w, point[0]))
+                cy = max(0, min(h, point[1]))
+                clean_box.append([cx, cy])
+            
+            # [Filter 3] Area Check
+            try:
+                poly = np.array(clean_box, dtype=np.int32)
+                area = cv2.contourArea(poly)
+                if area < 50: 
+                    logger.debug(f"Filtered small area: {area}")
+                    continue
+            except:
+                pass # If calculation fails, keep it or skip. Let's keep for safety.
+
+            # Update item
+            item['box'] = clean_box
+            valid_results.append(item)
+
+        logger.info(f"Detected {len(valid_results)} valid text blocks (Filtered from {len(parsed_results)}).")
+        return valid_results
             
         return parsed_results

@@ -8,6 +8,7 @@ from imagetranslaterai.ocr_engine import OCREngine
 from imagetranslaterai.translator import Translator
 from imagetranslaterai.inpainter import Inpainter
 from imagetranslaterai.renderer import TextRenderer
+from imagetranslaterai.utils import ImageUtils # [ROI Add]
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -20,16 +21,35 @@ def main():
         os.makedirs(assets_dir, exist_ok=True)
         
         # Use local image directly
-        image_path = os.path.join(assets_dir, "e5ea977f9440c888cfd63d601f96f7d1.jpg")
+        # Use local image directly
+        # original_image_path = os.path.join(assets_dir, "sample_poster.jpg")
+        original_image_path = os.path.join(assets_dir, "chinese_test.png")
         
-        if not os.path.exists(image_path):
-            logger.warning(f"Test image not found at {image_path}. Please ensure 'image.png' is in the assets folder.")
+        if not os.path.exists(original_image_path):
+            logger.warning(f"Test image not found at {original_image_path}.")
             return
+
+        # *** ROI SETTINGS (Example) ***
+        # roi_coords = (50, 100, 800, 400) # (x, y, w, h) - Set to None to disable
+        # *** ROI SETTINGS (Example) ***
+        # roi_coords = (50, 100, 800, 400) # (x, y, w, h) - Set to None to disable
+        # roi_coords = (50, 100, 800, 400) # (x, y, w, h) - Set to None to disable
+        roi_coords = None # Full Image Processing
+        
+        # [ROI] Logic Switch
+        if roi_coords:
+            logger.info(f"ROI Processing Enabled: {roi_coords}")
+            # Crop ROI from original
+            processing_image_path = ImageUtils.crop_image(original_image_path, *roi_coords)
+        else:
+            logger.info("Full Image Processing Enabled")
+            processing_image_path = original_image_path
 
         # 2. OCR
         logger.info(">>> Step 1: OCR Detection")
-        ocr = OCREngine()
-        ocr_results = ocr.detect_text(image_path)
+        # [Chinese Support] Change lang to 'ch'
+        ocr = OCREngine(lang='ch') 
+        ocr_results = ocr.detect_text(processing_image_path)
         
         if not ocr_results:
             logger.warning("No text detected. Aborting pipeline.")
@@ -37,7 +57,7 @@ def main():
 
         # Visualize detected boxes
         try:
-            debug_img = cv2.imread(image_path)
+            debug_img = cv2.imread(processing_image_path)
             if debug_img is not None:
                 for item in ocr_results:
                     # Draw box (Red, thickness 2)
@@ -59,30 +79,32 @@ def main():
         
         # Create mask
         # padding=5 (Ultra-Tight OCR에 맞춰 마스크영역 약간 확대)
-        mask_path = inpainter.create_mask(image_path, all_boxes, padding=5)
+        # Create mask
+        # padding=5 (Ultra-Tight OCR에 맞춰 마스크영역 약간 확대)
+        mask_path = inpainter.create_mask(processing_image_path, all_boxes, padding=2) # [Refactor] Padding 2
         
         # Perform inpainting
         inpainted_path = os.path.join(assets_dir, "pipeline_restored_bg.webp")
         # Inpainter requires API key, handle gracefully if missing or error
         try:
             # Use simple fill directly as requested by user or verify fallback
-            inpainter.inpaint_simple_fill(image_path, mask_path, inpainted_path)
+            inpainter.inpaint_simple_fill(processing_image_path, mask_path, inpainted_path)
             logger.info(f"Background restored (Simple Fill): {inpainted_path}")
         except Exception as e:
             logger.error(f"Skipping inpainting: {e}")
-            inpainted_path = image_path # Fallback
+            inpainted_path = processing_image_path # Fallback
 
         # 4. Translation & Analysis (Multilingual Support)
         logger.info(">>> Step 3: Translation & Style Analysis")
         translator = Translator()
         
         # *** TARGET LANGUAGE SETTING ***
-        target_lang = "Japanese" # Change to "Japanese", "French", etc.
+        target_lang = "Korean" # Changed to Korean for Chinese source
         logger.info(f"Target Language: {target_lang}")
         
         analysis_data = []
         try:
-            analysis_data = translator.translate_and_analyze(ocr_results, image_path, target_language=target_lang)
+            analysis_data = translator.translate_and_analyze(ocr_results, processing_image_path, target_language=target_lang)
             
             # Save analysis to JSON for review
             analysis_path = os.path.join(assets_dir, "translation_analysis.json")
@@ -102,7 +124,7 @@ def main():
             renderer = TextRenderer()
             
             # Decide which background to use
-            bg_to_use = inpainted_path if (os.path.exists(inpainted_path) and inpainted_path != image_path) else image_path
+            bg_to_use = inpainted_path if (os.path.exists(inpainted_path) and inpainted_path != processing_image_path) else processing_image_path
             
             # Create outputs directory
             outputs_dir = os.path.join(os.getcwd(), "outputs")
@@ -115,6 +137,21 @@ def main():
             try:
                 renderer.render_text(bg_to_use, analysis_data, final_output_path)
                 logger.info(f"Pipeline Completed! Output at: {final_output_path}")
+
+                # [ROI] Merge back if needed
+                if roi_coords:
+                     logger.info(">>> Step 5: ROI Merging")
+                     # Paste processed ROI back to original
+                     merged_output_path = final_output_path.replace(".jpg", "_merged.jpg")
+                     ImageUtils.merge_image(
+                         original_image_path, 
+                         final_output_path, 
+                         roi_coords[0], 
+                         roi_coords[1], 
+                         merged_output_path
+                     )
+                     logger.info(f"ROI Merged Output: {merged_output_path}")
+
             except Exception as e:
                 logger.error(f"Rendering failed: {e}")
                 import traceback

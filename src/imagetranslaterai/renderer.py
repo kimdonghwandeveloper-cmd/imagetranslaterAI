@@ -34,7 +34,7 @@ class TextRenderer:
     def render_text(self, bg_image_path: str, analysis_data: List[Dict[str, Any]], output_path: str):
         """
         Renders translated text onto the background image.
-        Supports multi-line text wrapping and vertical centering.
+        Supports multi-line text wrapping and smart alignment.
         """
         try:
             image = Image.open(bg_image_path).convert("RGBA")
@@ -57,8 +57,25 @@ class TextRenderer:
                 
                 color_hex = style.get('text_color_hex', '#000000')
                 
-                # 3. Drawing with Vertical Centering
-                self._draw_multiline_text(draw, lines, box, color_hex, font, image.width)
+                # [Refactor] Smart Alignment Logic
+                # If 'alignment' is explicitly set in style, use it.
+                # Otherwise, detect if the box is centered in the image.
+                if 'alignment' in style:
+                     alignment = style['alignment']
+                else:
+                    # Calculate box center relative to image
+                    xs = [p[0] for p in box]
+                    box_center_x = (min(xs) + max(xs)) / 2
+                    img_center_x = image.width / 2
+                    
+                    # If box center is within 5% of image center, assume Center Align
+                    if abs(box_center_x - img_center_x) < (image.width * 0.05):
+                        alignment = 'center'
+                    else:
+                        alignment = 'left'
+
+                # 3. Drawing
+                self._draw_multiline_text(draw, lines, box, color_hex, font, alignment)
 
             final_image = image.convert("RGB")
             final_image.save(output_path)
@@ -80,7 +97,6 @@ class TextRenderer:
         full_h = max(ys) - min(ys)
         
         # [수정] Safe Area Logic (5% Internal Padding)
-        # 박스를 꽉 채우지 않고 여백을 두어 답답함 방지
         box_w = full_w * 0.95
         box_h = full_h * 0.95
         
@@ -110,8 +126,6 @@ class TextRenderer:
             lines = textwrap.wrap(text, width=wrap_width)
             
             # Calculate total height
-            # Height = (Line Height * Count)
-            # Use specific character '가' or 'A' for reliable height
             bbox = font.getbbox("가")
             line_height = (bbox[3] - bbox[1]) * 1.2 # 1.2 line spacing
             total_text_h = line_height * len(lines)
@@ -122,44 +136,41 @@ class TextRenderer:
                 w = draw.textlength(line, font=font)
                 if w > max_line_w: max_line_w = w
 
-            # Fits? (Allow 10% overflow tolerance for aesthetics)
+            # Fits? (Allow 10% overflow tolerance)
             if max_line_w <= box_w * 1.1 and total_text_h <= box_h * 1.1:
                 best_size = mid_size
                 best_font = font
                 best_lines = lines
-                low = mid_size + 1 # Try larger
+                low = mid_size + 1 
             else:
-                high = mid_size - 1 # Too big
+                high = mid_size - 1
         
         if best_font is None:
             best_font = ImageFont.truetype(self.font_path, min_font_size)
 
         return best_font, best_lines, best_size
 
-    def _draw_multiline_text(self, draw, lines, box, color, font, img_w):
+    def _draw_multiline_text(self, draw, lines, box, color, font, alignment='left'):
         xs = [p[0] for p in box]
         ys = [p[1] for p in box]
         
-        # Center of box
-        center_x = (min(xs) + max(xs)) / 2
+        # Dimensions
+        min_x = min(xs)
+        max_x = max(xs)
+        center_x = (min_x + max_x) / 2
         center_y = (min(ys) + max(ys)) / 2
         
-        # Total block height
+        # Vertical centering (Block)
         bbox = font.getbbox("가")
         line_height = (bbox[3] - bbox[1]) * 1.2
         total_h = line_height * len(lines)
-        
-        # Start Y (Vertical Center)
         current_y = center_y - (total_h / 2) + (line_height / 2) 
         
         for line in lines:
-            # Horizontal Clamping (inherited concept) + Center Anchor
-            # But anchor='mm' handles centering at (x,y).
-            # We just need to check if center_x causes clipping?
-            # For multiline, clamping is tricky per line if their widths vary.
-            # Assuming center_x is generally safe or strictly inside image.
-            # If strictly needed, we can clamp center_x based on max_line_w...
-            # For now, stick to standard center drawing which is robust enough with wrapping.
+            if alignment == 'center':
+                draw.text((center_x, current_y), line, font=font, fill=color, anchor="mm")
+            else: # 'left' default
+                # Left align start x is min_x (plus small padding)
+                draw.text((min_x, current_y), line, font=font, fill=color, anchor="lm")
             
-            draw.text((center_x, current_y), line, font=font, fill=color, anchor="mm")
             current_y += line_height

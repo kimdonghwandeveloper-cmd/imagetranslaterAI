@@ -26,22 +26,29 @@ debug_ocr.txt
 *.log
 
 # Generated Assets
-assets/NanumGothic.ttf
-assets/*.webp
-assets/*.json
-assets/*_mask.png
-assets/final_output.jpg
-assets/*_restored.jpg
-outputs/
-
-
-# Request by user to clean commit list
-# debug artifacts
-debug_*.txt
-assets/debug_*.jpg
-
 # User uploaded test images (hash filenames)
 assets/*.jpg
 assets/*.png
 !assets/sample_poster.jpg
 !assets/image.png
+
+# Allow Font (Required for Renderer)
+!assets/NanumGothic.ttf
+
+# Generated Outputs
+outputs/
+
+# Logs & Debug
+error_log.txt
+error_log_*.txt
+debug_*.txt
+assets/debug_*.jpg
+assets/*_mask.png
+assets/*.webp
+assets/*.json
+
+# Frontend (OCR)
+OCR/node_modules/
+OCR/dist/
+OCR/.env
+OCR/.DS_Store
