@@ -47,7 +47,8 @@ assets/*_mask.png
 assets/*.webp
 assets/*.json
 
-# Frontend (OCR)
+# Frontend (OCR) - Ignored
+OCR/
 OCR/node_modules/
 OCR/dist/
 OCR/.env
